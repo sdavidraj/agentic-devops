@@ -1,0 +1,120 @@
+name: Agentic DigitalOcean VM Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      droplet_name:
+        description: DigitalOcean Droplet name
+        required: false
+        default: checkout-service-demo
+      region:
+        description: DigitalOcean region
+        required: false
+        default: nyc3
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy-digitalocean-vm:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOYMENT_TARGET: digitalocean-vm
+      DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      VM_SSH_PRIVATE_KEY: ${{ secrets.VM_SSH_PRIVATE_KEY }}
+      GHCR_IMAGE: ghcr.io/${{ github.repository }}/checkout-service:${{ github.sha }}
+      DOCKER_IMAGE: ghcr.io/${{ github.repository }}/checkout-service:${{ github.sha }}
+      VM_APP_PORT: "8080"
+      TF_VAR_do_token: ${{ secrets.DIGITALOCEAN_TOKEN }}
+      TF_VAR_droplet_name: ${{ inputs.droplet_name }}
+      TF_VAR_region: ${{ inputs.region }}
+      TF_VAR_ssh_public_key: ${{ secrets.VM_SSH_PUBLIC_KEY }}
+      TF_VAR_ssh_key_fingerprint: ${{ secrets.DIGITALOCEAN_SSH_KEY_FINGERPRINT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r app/requirements.txt
+          python -m pip install pytest python-dotenv pyyaml openai
+
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push checkout image
+        run: |
+          docker build -t "$GHCR_IMAGE" -f app/Dockerfile app
+          docker push "$GHCR_IMAGE"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infra/digitalocean
+        run: terraform init
+
+      - name: Terraform plan
+        working-directory: infra/digitalocean
+        run: terraform plan -out=tfplan
+
+      - name: Terraform apply
+        working-directory: infra/digitalocean
+        run: terraform apply -auto-approve tfplan
+
+      - name: Capture Terraform outputs
+        id: terraform-output
+        working-directory: infra/digitalocean
+        run: |
+          droplet_ip="$(terraform output -raw droplet_ipv4_address)"
+          ssh_user="$(terraform output -raw ssh_user)"
+          app_url="$(terraform output -raw app_url)"
+          echo "vm_host=$droplet_ip" >> "$GITHUB_OUTPUT"
+          echo "vm_user=$ssh_user" >> "$GITHUB_OUTPUT"
+          echo "app_url=$app_url" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for SSH
+        env:
+          VM_HOST: ${{ steps.terraform-output.outputs.vm_host }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VM_SSH_PRIVATE_KEY" > ~/.ssh/agentic_do_key
+          chmod 600 ~/.ssh/agentic_do_key
+          for i in {1..30}; do
+            if ssh -i ~/.ssh/agentic_do_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 root@"$VM_HOST" "echo ready"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1
+
+      - name: Run agentic DigitalOcean deployment
+        env:
+          VM_HOST: ${{ steps.terraform-output.outputs.vm_host }}
+          VM_USER: ${{ steps.terraform-output.outputs.vm_user }}
+          SLO_BASE_URL: ${{ steps.terraform-output.outputs.app_url }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          export VM_SSH_KEY_PATH="$HOME/.ssh/agentic_do_key"
+          PYTHONPATH=. python agents/orchestrator.py \
+            --intent "Deploy checkout-service to DigitalOcean VM using GitHub Actions" \
+            --deploy
+
+      - name: Upload release notes
+        if: ${{ always() && hashFiles('docs/release-notes.md') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: digitalocean-release-notes
+          path: docs/release-notes.md

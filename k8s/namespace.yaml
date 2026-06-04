@@ -1,0 +1,6 @@
+# Namespace for the local kind demo.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentic-devops

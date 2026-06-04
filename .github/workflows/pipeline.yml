@@ -1,0 +1,22 @@
+# Placeholder GitHub Actions workflow for the Agentic DevOps demo.
+# Later versions will add Docker build, tests, Kubernetes validation, and agent
+# pipeline execution.
+
+name: Agentic DevOps Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  scaffold-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Placeholder pipeline step
+        run: echo "Agentic DevOps pipeline scaffold is ready."
+

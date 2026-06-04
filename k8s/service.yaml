@@ -1,0 +1,17 @@
+# Kubernetes Service for the checkout microservice.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: checkout-service
+  namespace: agentic-devops
+  labels:
+    app: checkout-service
+spec:
+  type: ClusterIP
+  selector:
+    app: checkout-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
