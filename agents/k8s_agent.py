@@ -399,6 +399,26 @@ def apply_safe_fixes(
 
 
 def run(context: dict[str, Any]) -> dict[str, Any]:
+    if context.get("deployment_target") == "digitalocean-vm":
+        return {
+            "agent": "k8s",
+            "status": "skipped",
+            "review_status": "not_applicable",
+            "summary": "Kubernetes review is not applicable for the DigitalOcean VM deployment.",
+            "details": [
+                "Deployment target: digitalocean-vm",
+                "Runtime: Docker container on a DigitalOcean Droplet",
+                "Kubernetes manifests are not applied by this deployment path.",
+                "No live Kubernetes cluster state was inspected.",
+            ],
+            "recommendations": [
+                "Use the Terraform, Security, Cost, VM Deploy, and SLO agents for this target."
+            ],
+            "live_state": {"available": False, "note": "not applicable for digitalocean-vm"},
+            "planned_actions": [],
+            "artifacts": [],
+        }
+
     missing = [str(path) for path in REQUIRED_MANIFESTS if not path.exists()]
     if missing:
         return {

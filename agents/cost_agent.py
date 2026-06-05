@@ -16,6 +16,7 @@ from agents.llm_client import ask_llm_json
 DEPLOYMENT_PATH = Path("k8s/deployment.yaml")
 HPA_PATH = Path("k8s/hpa.yaml")
 TERRAFORM_DIR = Path("infra/terraform")
+DIGITALOCEAN_TERRAFORM_DIR = Path("infra/digitalocean")
 
 SYSTEM_PROMPT = """You are a senior cloud FinOps architect specializing in Kubernetes and GCP.
 
@@ -27,6 +28,18 @@ Identify over-provisioning, right-sizing opportunities, autoscaling improvements
 
 If deployment_target is minikube, do not estimate GKE, cloud load balancer, or cloud management fees.
 For minikube, focus on local resource reservations, right-sizing, and demo environment hygiene.
+
+Return only JSON."""
+
+DO_VM_SYSTEM_PROMPT = """You are a senior FinOps advisor reviewing a DigitalOcean Droplet VM deployment.
+
+This target is digitalocean-vm. The app is deployed as a Docker container on a Droplet over SSH, not into Kubernetes.
+
+Rules:
+- Do not describe Kubernetes nodes, Kubernetes control planes, HPA behavior, pod scheduling, cluster autoscaling, kubectl metrics, or Service type=LoadBalancer as cost drivers for this target.
+- If Kubernetes manifest values are provided, treat them only as repository evidence for app sizing. They are not applied by the DigitalOcean VM deploy path.
+- Focus on Droplet size, region, always-on runtime, firewall exposure, Docker image/container footprint, optional block storage, snapshots/backups if enabled, network transfer, and cleanup after demos.
+- Be explicit that Kubernetes is not running for this deployment target unless the inputs explicitly say otherwise.
 
 Return only JSON."""
 
@@ -55,6 +68,20 @@ CLOUD_ONLY_TERMS = [
     "inter-zone",
     "committed-use",
     "autopilot",
+]
+
+KUBERNETES_ONLY_TERMS = [
+    "kubernetes node",
+    "kubernetes control plane",
+    "control plane",
+    "cluster autoscaler",
+    "cluster autoscaling",
+    "node autoscaling",
+    "pod scheduling",
+    "scheduling failures",
+    "service type=loadbalancer",
+    "hpa",
+    "kubectl",
 ]
 
 
@@ -108,6 +135,24 @@ def terraform_machine_types() -> list[str]:
     return sorted(machine_types)
 
 
+def digitalocean_terraform_defaults() -> dict[str, Any]:
+    defaults: dict[str, Any] = {}
+    variables_path = DIGITALOCEAN_TERRAFORM_DIR / "variables.tf"
+    if not variables_path.exists():
+        return defaults
+
+    content = variables_path.read_text(encoding="utf-8")
+    for name in ["region", "droplet_name", "size", "image"]:
+        match = re.search(
+            rf'variable\s+"{name}"\s*{{.*?default\s*=\s*"([^"]+)"',
+            content,
+            flags=re.DOTALL,
+        )
+        if match:
+            defaults[name] = match.group(1)
+    return defaults
+
+
 def storage_resources(deployment: dict[str, Any]) -> list[str]:
     volumes = deployment.get("spec", {}).get("template", {}).get("spec", {}).get("volumes", [])
     storage = []
@@ -128,8 +173,10 @@ def manifest_inputs(context: dict[str, Any]) -> dict[str, Any]:
     limits = resources.get("limits", {})
     plan = context.get("deployment_plan", {})
 
+    target = context.get("deployment_target") or deployment_target()
+
     return {
-        "deployment_target": context.get("deployment_target") or deployment_target(),
+        "deployment_target": target,
         "namespace": plan.get("namespace")
         or deployment.get("metadata", {}).get("namespace")
         or context.get("namespace")
@@ -152,6 +199,8 @@ def manifest_inputs(context: dict[str, Any]) -> dict[str, Any]:
             "max_replicas": hpa.get("spec", {}).get("maxReplicas"),
         },
         "vm_machine_types": terraform_machine_types(),
+        "digitalocean_vm": digitalocean_terraform_defaults() if target == "digitalocean-vm" else {},
+        "kubernetes_manifests_applied": target in {"minikube", "gke"},
         "storage_resources": storage_resources(deployment),
     }
 
@@ -250,12 +299,16 @@ def build_prompt(inputs: dict[str, Any], live: dict[str, Any], waste: dict[str, 
 def system_prompt_for_target(target: str) -> str:
     if target == "minikube":
         return MINIKUBE_SYSTEM_PROMPT
+    if target == "digitalocean-vm":
+        return DO_VM_SYSTEM_PROMPT
     return SYSTEM_PROMPT
 
 
 def fallback_estimate(inputs: dict[str, Any], waste: dict[str, Any]) -> dict[str, Any]:
     if inputs.get("deployment_target") == "minikube":
         return minikube_estimate(inputs, waste)
+    if inputs.get("deployment_target") == "digitalocean-vm":
+        return digitalocean_vm_estimate(inputs, waste)
 
     replicas = inputs.get("replica_count") or 2
     min_replicas = inputs.get("autoscaling", {}).get("min_replicas") or replicas
@@ -325,6 +378,41 @@ def minikube_estimate(inputs: dict[str, Any], waste: dict[str, Any]) -> dict[str
     }
 
 
+def digitalocean_vm_estimate(inputs: dict[str, Any], waste: dict[str, Any]) -> dict[str, Any]:
+    vm = inputs.get("digitalocean_vm") or {}
+    size = vm.get("size", "s-1vcpu-1gb")
+    region = vm.get("region", "unknown region")
+    droplet_name = vm.get("droplet_name", "checkout-service-demo")
+    recommendations = [
+        "Kubernetes is not running for the digitalocean-vm target; the app runs as a Docker container on a Droplet.",
+        "Keep the Droplet size aligned with measured container CPU and memory usage.",
+        "Destroy or power down the demo Droplet when it is not needed.",
+        "Restrict SSH and app firewall CIDRs for private demos.",
+        "Watch outbound transfer if the checkout API becomes public or chatty.",
+    ]
+
+    return {
+        "estimated_monthly_cost_range": {"low": 6, "high": 18},
+        "monthly_cost_range": {"low": 6, "high": 18},
+        "cost_drivers": [
+            f"DigitalOcean Droplet {droplet_name} using size {size} in {region}",
+            "Always-on VM runtime for the Dockerized checkout-service",
+            "Included root disk for the Droplet; extra volumes, snapshots, or backups would add cost if enabled",
+            "Network transfer from the public app endpoint on port 8080",
+        ],
+        "optimization_opportunities": recommendations,
+        "risk_level": "Low",
+        "executive_summary": (
+            "This DigitalOcean target deploys checkout-service as a Docker container on a Droplet, "
+            "not inside Kubernetes. The main FinOps concern is the always-on Droplet cost and cleanup "
+            "discipline after demos, with Kubernetes manifest requests used only as rough sizing evidence."
+        ),
+        "waste_percentage": waste.get("waste_percentage", 0),
+        "potential_savings": 0,
+        "recommendations": recommendations,
+    }
+
+
 def stringify_item(item: Any) -> str:
     if isinstance(item, str):
         return item
@@ -374,6 +462,11 @@ def contains_cloud_only_terms(text: str) -> bool:
     return any(term in lowered for term in CLOUD_ONLY_TERMS)
 
 
+def contains_kubernetes_only_terms(text: str) -> bool:
+    lowered = text.lower()
+    return any(term in lowered for term in KUBERNETES_ONLY_TERMS)
+
+
 def sanitize_minikube_estimate(estimate: dict[str, Any], fallback: dict[str, Any]) -> dict[str, Any]:
     sanitized = dict(estimate)
     sanitized["estimated_monthly_cost_range"] = {"low": 0, "high": 0}
@@ -404,6 +497,37 @@ def sanitize_minikube_estimate(estimate: dict[str, Any], fallback: dict[str, Any
     return sanitized
 
 
+def sanitize_digitalocean_vm_estimate(estimate: dict[str, Any], fallback: dict[str, Any]) -> dict[str, Any]:
+    sanitized = dict(estimate)
+    sanitized["cost_drivers"] = [
+        item for item in normalize_list(sanitized.get("cost_drivers"), fallback["cost_drivers"])
+        if not contains_kubernetes_only_terms(item)
+    ] or fallback["cost_drivers"]
+    sanitized["optimization_opportunities"] = [
+        item
+        for item in normalize_list(
+            sanitized.get("optimization_opportunities"),
+            fallback["optimization_opportunities"],
+        )
+        if not contains_kubernetes_only_terms(item)
+    ] or fallback["optimization_opportunities"]
+    sanitized["recommendations"] = [
+        item for item in normalize_list(sanitized.get("recommendations"), fallback["recommendations"])
+        if not contains_kubernetes_only_terms(item)
+    ] or fallback["recommendations"]
+
+    summary = str(sanitized.get("executive_summary") or "")
+    if contains_kubernetes_only_terms(summary):
+        sanitized["executive_summary"] = fallback["executive_summary"]
+
+    if not any("kubernetes is not running" in item.lower() for item in sanitized["recommendations"]):
+        sanitized["recommendations"] = [
+            "Kubernetes is not running for the digitalocean-vm target; the app runs as a Docker container on a Droplet."
+        ] + sanitized["recommendations"]
+
+    return sanitized
+
+
 def print_finops_report(inputs: dict[str, Any], estimate: dict[str, Any]) -> None:
     cost_range = estimate["estimated_monthly_cost_range"]
     width = 64
@@ -413,10 +537,26 @@ def print_finops_report(inputs: dict[str, Any], estimate: dict[str, Any]) -> Non
     print(f"Target: {inputs.get('deployment_target', 'unknown')}")
     print(f"Service: {inputs['service_name']}")
     print(f"Namespace: {inputs['namespace']}")
-    print(f"Replicas: {inputs.get('replica_count')}")
-    print(f"Requests: CPU {inputs.get('cpu_requests')} / Memory {inputs.get('memory_requests')}")
-    print(f"Limits: CPU {inputs.get('cpu_limits')} / Memory {inputs.get('memory_limits')}")
-    print(f"HPA: {inputs['autoscaling'].get('min_replicas')}-{inputs['autoscaling'].get('max_replicas')} replicas")
+    if inputs.get("deployment_target") == "digitalocean-vm":
+        vm = inputs.get("digitalocean_vm") or {}
+        print("Runtime: Docker container on DigitalOcean Droplet")
+        print("Kubernetes: not used by this deployment target")
+        print(
+            "Droplet: "
+            f"{vm.get('droplet_name', 'checkout-service-demo')} / "
+            f"{vm.get('size', 'unknown size')} / "
+            f"{vm.get('region', 'unknown region')}"
+        )
+        print(
+            "Manifest sizing evidence: "
+            f"{inputs.get('replica_count')} replicas, "
+            f"requests CPU {inputs.get('cpu_requests')} / Memory {inputs.get('memory_requests')}"
+        )
+    else:
+        print(f"Replicas: {inputs.get('replica_count')}")
+        print(f"Requests: CPU {inputs.get('cpu_requests')} / Memory {inputs.get('memory_requests')}")
+        print(f"Limits: CPU {inputs.get('cpu_limits')} / Memory {inputs.get('memory_limits')}")
+        print(f"HPA: {inputs['autoscaling'].get('min_replicas')}-{inputs['autoscaling'].get('max_replicas')} replicas")
     print("-" * width)
     print(f"Estimated Monthly Cost: ${cost_range['low']:.0f} - ${cost_range['high']:.0f}")
     print(f"Risk: {estimate['risk_level']}")
@@ -451,6 +591,8 @@ def run(context: dict[str, Any]) -> dict[str, Any]:
         estimate = normalize_response(response, fallback)
         if target == "minikube":
             estimate = sanitize_minikube_estimate(estimate, fallback)
+        if target == "digitalocean-vm":
+            estimate = sanitize_digitalocean_vm_estimate(estimate, fallback)
     except Exception as exc:
         source = "safe_defaults"
         estimate = fallback
@@ -461,13 +603,27 @@ def run(context: dict[str, Any]) -> dict[str, Any]:
     details = [
         f"FinOps source: {source}",
         f"Namespace: {inputs['namespace']}",
-        f"Replicas: {inputs.get('replica_count')}",
-        f"CPU request/limit: {inputs.get('cpu_requests')} / {inputs.get('cpu_limits')}",
-        f"Memory request/limit: {inputs.get('memory_requests')} / {inputs.get('memory_limits')}",
-        f"Autoscaling: {inputs['autoscaling'].get('min_replicas')}-{inputs['autoscaling'].get('max_replicas')}",
         f"Waste percentage: {estimate['waste_percentage']}%",
         f"Potential monthly savings: ${estimate['potential_savings']}",
     ]
+    if target == "digitalocean-vm":
+        vm = inputs.get("digitalocean_vm") or {}
+        details.extend(
+            [
+                "Runtime: Docker container on DigitalOcean Droplet",
+                "Kubernetes manifests applied: false",
+                f"Droplet size: {vm.get('size', 'unknown')}",
+            ]
+        )
+    else:
+        details.extend(
+            [
+                f"Replicas: {inputs.get('replica_count')}",
+                f"CPU request/limit: {inputs.get('cpu_requests')} / {inputs.get('cpu_limits')}",
+                f"Memory request/limit: {inputs.get('memory_requests')} / {inputs.get('memory_limits')}",
+                f"Autoscaling: {inputs['autoscaling'].get('min_replicas')}-{inputs['autoscaling'].get('max_replicas')}",
+            ]
+        )
     if estimate.get("fallback_reason"):
         details.append(f"Fallback reason: {estimate['fallback_reason']}")
 

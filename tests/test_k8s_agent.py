@@ -74,6 +74,27 @@ def fake_live_state(deployment, service, namespace, app_name):
     }
 
 
+def test_k8s_agent_skips_digitalocean_vm_without_cluster_or_manifests(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        k8s_agent,
+        "live_cluster_state",
+        lambda deployment, service, namespace, app_name: (_ for _ in ()).throw(
+            AssertionError("live Kubernetes state should not be inspected")
+        ),
+    )
+
+    result = k8s_agent.run({"deployment_target": "digitalocean-vm"})
+
+    assert result["status"] == "skipped"
+    assert result["review_status"] == "not_applicable"
+    assert result["live_state"]["note"] == "not applicable for digitalocean-vm"
+    assert result["planned_actions"] == []
+    assert result["artifacts"] == []
+    assert "DigitalOcean VM" in result["summary"]
+    assert any("Kubernetes manifests are not applied" in detail for detail in result["details"])
+
+
 def test_k8s_agent_uses_openai_review_without_modifying_files(monkeypatch, tmp_path) -> None:
     write_manifests(tmp_path)
     monkeypatch.chdir(tmp_path)

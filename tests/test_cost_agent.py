@@ -120,6 +120,54 @@ def test_cost_agent_minikube_uses_target_specific_llm_and_sanitizes_cloud_terms(
     assert "GKE" not in result["executive_summary"]
 
 
+def test_cost_agent_digitalocean_vm_does_not_report_kubernetes_runtime(monkeypatch) -> None:
+    calls = []
+
+    def fake_llm(system, user):
+        calls.append((system, user))
+        return {
+            "estimated_monthly_cost_range": {"low": 24, "high": 80},
+            "cost_drivers": [
+                "DigitalOcean VM compute for Kubernetes node(s)",
+                "Network transfer from the public endpoint",
+            ],
+            "optimization_opportunities": [
+                "Tune HPA and Cluster Autoscaler settings",
+                "Destroy the Droplet after the demo",
+            ],
+            "risk_level": "Medium",
+            "executive_summary": "Monthly cost is dominated by Kubernetes node underutilization.",
+            "waste_percentage": 15,
+            "potential_savings": 10,
+            "recommendations": ["Use kubectl top pods for right-sizing."],
+        }
+
+    monkeypatch.setattr(cost_agent, "ask_llm_json", fake_llm)
+
+    result = cost_agent.run(
+        {
+            "deployment_target": "digitalocean-vm",
+            "deployment_plan": {"namespace": "agentic-devops"},
+        }
+    )
+
+    combined = " ".join(
+        result["cost_drivers"]
+        + result["optimization_opportunities"]
+        + result["recommendations"]
+        + [result["executive_summary"]]
+    )
+
+    assert calls
+    assert "Docker container on a Droplet" in calls[0][0]
+    assert result["finops_inputs"]["digitalocean_vm"]["size"] == "s-1vcpu-1gb"
+    assert result["finops_inputs"]["kubernetes_manifests_applied"] is False
+    assert "Kubernetes node" not in combined
+    assert "HPA" not in combined
+    assert "kubectl" not in combined
+    assert "Docker container on a Droplet" in combined
+
+
 def test_normalize_response_formats_dict_items() -> None:
     fallback = cost_agent.minikube_estimate(
         {"replica_count": 2, "autoscaling": {}, "cpu_requests": "100m", "memory_requests": "128Mi"},
