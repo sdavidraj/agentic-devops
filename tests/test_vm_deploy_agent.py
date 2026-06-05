@@ -30,6 +30,9 @@ def test_vm_deploy_agent_builds_expected_ssh_docker_command(monkeypatch) -> None
     assert commands[0][0] == "ssh"
     assert commands[0][-2] == "root@203.0.113.10"
     remote_script = commands[0][-1]
+    assert "apt_update_with_retry" in remote_script
+    assert "archive.ubuntu.com/ubuntu" in remote_script
+    assert "command -v docker >/dev/null 2>&1" in remote_script
     assert "docker pull ghcr.io/acme/checkout-service:sha" in remote_script
     assert "docker rm -f checkout-service-previous" in remote_script
     assert "docker rename checkout-service checkout-service-previous" in remote_script

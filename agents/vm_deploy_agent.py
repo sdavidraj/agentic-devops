@@ -97,12 +97,39 @@ def remote_docker_login_command() -> str | None:
     )
 
 
+def remote_docker_bootstrap_command() -> str:
+    return """
+if ! command -v docker >/dev/null 2>&1; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt_update_with_retry() {
+    for attempt in 1 2 3; do
+      rm -rf /var/lib/apt/lists/*
+      if apt-get update; then
+        return 0
+      fi
+      sleep 10
+    done
+    return 1
+  }
+
+  if ! apt_update_with_retry; then
+    sed -i \
+      's|http://mirrors.digitalocean.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+      /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
+    apt_update_with_retry
+  fi
+
+  apt-get install -y docker.io
+  systemctl enable --now docker
+fi
+command -v docker >/dev/null 2>&1
+""".strip()
+
+
 def remote_deploy_script(image: str, app_port: int) -> str:
     commands = [
         "set -euo pipefail",
-        "if ! command -v docker >/dev/null 2>&1; then "
-        "apt-get update && apt-get install -y docker.io && systemctl enable --now docker; "
-        "fi",
+        remote_docker_bootstrap_command(),
     ]
     login = remote_docker_login_command()
     if login:
