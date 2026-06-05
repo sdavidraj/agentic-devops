@@ -5,7 +5,7 @@ IMAGE_NAME := checkout-service:latest
 PYTHON := .venv/bin/python
 PIP := .venv/bin/pip
 
-.PHONY: setup test build deploy validate-slo simulate-failure rollback clean
+.PHONY: setup test build deploy validate-slo simulate-failure rollback clean-minikube-resources clean
 
 setup:
 	python -m venv .venv
@@ -29,8 +29,10 @@ simulate-failure:
 rollback:
 	PYTHONPATH=. $(PYTHON) -c 'from agents.rollback_agent import run; run({"agent_outputs": {"slo": {"status": "failed"}}})'
 
+clean-minikube-resources:
+	./cleanup-minikube.sh
+
 clean:
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
 	rm -rf .pytest_cache
 	kind delete cluster --name $(CLUSTER_NAME) || true
-
