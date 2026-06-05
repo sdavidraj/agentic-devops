@@ -66,6 +66,15 @@ GHCR_USERNAME
 GHCR_TOKEN
 ```
 
+For repeat workflow runs, prefer `DIGITALOCEAN_SSH_KEY_FINGERPRINT` for an
+existing account key. If only `VM_SSH_PUBLIC_KEY` is configured, the workflow
+queries DigitalOcean for a matching public key and reuses its fingerprint before
+Terraform plans. This avoids duplicate SSH key creation on reruns.
+
+GitHub-hosted runners do not preserve local Terraform state between workflow
+runs. Use a remote Terraform backend for long-lived infrastructure, or destroy
+the demo Droplet/firewall after each run.
+
 ## SLO Validation
 
 For `DEPLOYMENT_TARGET=digitalocean-vm`, the SLO agent uses:

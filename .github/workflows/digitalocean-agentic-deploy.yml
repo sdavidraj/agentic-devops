@@ -65,6 +65,38 @@ jobs:
         working-directory: infra/digitalocean
         run: terraform init
 
+      - name: Resolve DigitalOcean SSH key
+        env:
+          CONFIGURED_FINGERPRINT: ${{ secrets.DIGITALOCEAN_SSH_KEY_FINGERPRINT }}
+          CONFIGURED_PUBLIC_KEY: ${{ secrets.VM_SSH_PUBLIC_KEY }}
+        run: |
+          if [ -n "$CONFIGURED_FINGERPRINT" ]; then
+            echo "TF_VAR_ssh_key_fingerprint=$CONFIGURED_FINGERPRINT" >> "$GITHUB_ENV"
+            echo "Using configured DigitalOcean SSH key fingerprint."
+            exit 0
+          fi
+
+          if [ -z "$CONFIGURED_PUBLIC_KEY" ]; then
+            echo "No VM_SSH_PUBLIC_KEY or DIGITALOCEAN_SSH_KEY_FINGERPRINT secret configured."
+            exit 1
+          fi
+
+          fingerprint="$(
+            curl -fsS \
+              -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
+              https://api.digitalocean.com/v2/account/keys |
+              jq -r --arg public_key "$CONFIGURED_PUBLIC_KEY" \
+                '.ssh_keys[] | select(.public_key == $public_key) | .fingerprint' |
+              head -n 1
+          )"
+
+          if [ -n "$fingerprint" ]; then
+            echo "TF_VAR_ssh_key_fingerprint=$fingerprint" >> "$GITHUB_ENV"
+            echo "Reusing existing DigitalOcean SSH key."
+          else
+            echo "No existing DigitalOcean SSH key found; Terraform will create one."
+          fi
+
       - name: Terraform plan
         working-directory: infra/digitalocean
         run: terraform plan -out=tfplan

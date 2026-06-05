@@ -162,6 +162,13 @@ VM_SSH_PUBLIC_KEY or DIGITALOCEAN_SSH_KEY_FINGERPRINT
 GHCR_USERNAME and GHCR_TOKEN if the VM must pull from a private GHCR package
 ```
 
+For repeat workflow runs, prefer setting `DIGITALOCEAN_SSH_KEY_FINGERPRINT`
+to an existing account key. If only `VM_SSH_PUBLIC_KEY` is set, the workflow
+looks up the matching key in DigitalOcean before Terraform runs and reuses it
+when found. Without a persistent Terraform backend, GitHub Actions does not
+retain Terraform state between runs, so existing Droplets/firewalls should be
+destroyed after the demo or imported into managed state before reuse.
+
 Trigger the workflow:
 
 1. Open GitHub Actions.
