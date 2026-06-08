@@ -69,6 +69,16 @@ def checkout_commons() -> dict[str, str | list[str]]:
     }
 
 
+@app.get("/checkout-rh")
+def checkout_rh() -> dict[str, str]:
+    """Return a successful checkout response for RH clients."""
+    return {
+        "status": "success",
+        "service": SERVICE_NAME,
+        "message": "Checkout completed successfully.",
+    }
+
+
 @app.get("/selwyn-checkout")
 def selwyn_checkout() -> dict[str, str | list[str] | dict[str, str | int]]:
     """Return checkout process information for Selwyn clients."""

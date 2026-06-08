@@ -65,6 +65,17 @@ def test_checkout_commons_returns_shared_capabilities() -> None:
     }
 
 
+def test_checkout_rh_returns_successful_checkout() -> None:
+    response = client.get("/checkout-rh")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "success",
+        "service": "checkout-service",
+        "message": "Checkout completed successfully.",
+    }
+
+
 def test_selwyn_checkout_returns_checkout_process_information() -> None:
     response = client.get("/selwyn-checkout")
 
