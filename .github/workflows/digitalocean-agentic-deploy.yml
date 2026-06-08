@@ -1,6 +1,9 @@
 name: Agentic DigitalOcean VM Deploy
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       droplet_name:
@@ -28,8 +31,8 @@ jobs:
       DOCKER_IMAGE: ghcr.io/${{ github.repository }}/checkout-service:${{ github.sha }}
       VM_APP_PORT: "8080"
       TF_VAR_do_token: ${{ secrets.DIGITALOCEAN_TOKEN }}
-      TF_VAR_droplet_name: ${{ inputs.droplet_name }}
-      TF_VAR_region: ${{ inputs.region }}
+      TF_VAR_droplet_name: ${{ inputs.droplet_name || 'checkout-service-demo' }}
+      TF_VAR_region: ${{ inputs.region || 'nyc3' }}
       TF_VAR_ssh_public_key: ${{ secrets.VM_SSH_PUBLIC_KEY }}
       TF_VAR_ssh_key_fingerprint: ${{ secrets.DIGITALOCEAN_SSH_KEY_FINGERPRINT }}
 

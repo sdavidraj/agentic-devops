@@ -63,3 +63,26 @@ def test_checkout_commons_returns_shared_capabilities() -> None:
         "resource": "checkout-commons",
         "capabilities": ["cart-validation", "payment-routing", "order-audit"],
     }
+
+
+def test_selwyn_checkout_returns_checkout_process_information() -> None:
+    response = client.get("/selwyn-checkout")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "success",
+        "service": "checkout-service",
+        "resource": "selwyn-checkout",
+        "process": {
+            "name": "checkout",
+            "description": "Validate cart, authorize payment, reserve inventory, and create an order.",
+            "estimatedDurationSeconds": 45,
+        },
+        "steps": [
+            "cart-validation",
+            "payment-authorization",
+            "inventory-reservation",
+            "order-confirmation",
+        ],
+        "supportedPaymentMethods": ["card", "wallet", "gift-card"],
+    }

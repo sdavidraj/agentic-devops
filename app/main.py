@@ -67,3 +67,25 @@ def checkout_commons() -> dict[str, str | list[str]]:
         "resource": "checkout-commons",
         "capabilities": ["cart-validation", "payment-routing", "order-audit"],
     }
+
+
+@app.get("/selwyn-checkout")
+def selwyn_checkout() -> dict[str, str | list[str] | dict[str, str | int]]:
+    """Return checkout process information for Selwyn clients."""
+    return {
+        "status": "success",
+        "service": SERVICE_NAME,
+        "resource": "selwyn-checkout",
+        "process": {
+            "name": "checkout",
+            "description": "Validate cart, authorize payment, reserve inventory, and create an order.",
+            "estimatedDurationSeconds": 45,
+        },
+        "steps": [
+            "cart-validation",
+            "payment-authorization",
+            "inventory-reservation",
+            "order-confirmation",
+        ],
+        "supportedPaymentMethods": ["card", "wallet", "gift-card"],
+    }
